@@ -64,7 +64,7 @@ AvatarController::AvatarController(RobotData &rd) : rd_(rd)
     //opto_ftsensor_sub = nh_avatar_.subscribe("/atiforce/ftsensor", 100, &AvatarController::OptoforceFTCallback, this); // real robot experiment
 
     robot_pose_pub = nh_avatar_.advertise<geometry_msgs::PoseArray>("/tocabi/robot_poses", 1);
-    robot_pose_msg.poses.resize(3);
+    robot_pose_msg.poses.resize(4);
 
     bool urdfmode = false;
     std::string urdf_path, desc_package_path;
@@ -1191,33 +1191,42 @@ void AvatarController::computeSlow()
     if(pub_cnt == 20){
         robot_pose_msg.header.stamp = ros::Time::now();
         robot_pose_msg.header.frame_id = "world";
+        // pelvis
+        robot_pose_msg.poses[0].position.x = rd_.link_[Pelvis].xpos(0);
+        robot_pose_msg.poses[0].position.y = rd_.link_[Pelvis].xpos(1);
+        robot_pose_msg.poses[0].position.z = rd_.link_[Pelvis].xpos(2);
+        Eigen::Quaterniond quat_pelvis(rd_.link_[Pelvis].rotm);
+        robot_pose_msg.poses[0].orientation.x = quat_pelvis.x();
+        robot_pose_msg.poses[0].orientation.y = quat_pelvis.y();
+        robot_pose_msg.poses[0].orientation.z = quat_pelvis.z();
+        robot_pose_msg.poses[0].orientation.w = quat_pelvis.w();
         // left hand
-        robot_pose_msg.poses[0].position.x = rd_.link_[Left_Hand].xpos(0);
-        robot_pose_msg.poses[0].position.y = rd_.link_[Left_Hand].xpos(1);
-        robot_pose_msg.poses[0].position.z = rd_.link_[Left_Hand].xpos(2);
+        robot_pose_msg.poses[1].position.x = rd_.link_[Left_Hand].xpos(0);
+        robot_pose_msg.poses[1].position.y = rd_.link_[Left_Hand].xpos(1);
+        robot_pose_msg.poses[1].position.z = rd_.link_[Left_Hand].xpos(2);
         Eigen::Quaterniond quat_lhand(rd_.link_[Left_Hand].rotm);
-        robot_pose_msg.poses[0].orientation.x = quat_lhand.x();
-        robot_pose_msg.poses[0].orientation.y = quat_lhand.y();
-        robot_pose_msg.poses[0].orientation.z = quat_lhand.z();
-        robot_pose_msg.poses[0].orientation.w = quat_lhand.w();
+        robot_pose_msg.poses[1].orientation.x = quat_lhand.x();
+        robot_pose_msg.poses[1].orientation.y = quat_lhand.y();
+        robot_pose_msg.poses[1].orientation.z = quat_lhand.z();
+        robot_pose_msg.poses[1].orientation.w = quat_lhand.w();
         // head
-        robot_pose_msg.poses[1].position.x = rd_.link_[Head].xpos(0);
-        robot_pose_msg.poses[1].position.y = rd_.link_[Head].xpos(1);
-        robot_pose_msg.poses[1].position.z = rd_.link_[Head].xpos(2);
+        robot_pose_msg.poses[2].position.x = rd_.link_[Head].xpos(0);
+        robot_pose_msg.poses[2].position.y = rd_.link_[Head].xpos(1);
+        robot_pose_msg.poses[2].position.z = rd_.link_[Head].xpos(2);
         Eigen::Quaterniond q_head(rd_.link_[Head].rotm);
-        robot_pose_msg.poses[1].orientation.x = q_head.x();
-        robot_pose_msg.poses[1].orientation.y = q_head.y();
-        robot_pose_msg.poses[1].orientation.z = q_head.z();
-        robot_pose_msg.poses[1].orientation.w = q_head.w();
+        robot_pose_msg.poses[2].orientation.x = q_head.x();
+        robot_pose_msg.poses[2].orientation.y = q_head.y();
+        robot_pose_msg.poses[2].orientation.z = q_head.z();
+        robot_pose_msg.poses[2].orientation.w = q_head.w();
         // right hand
-        robot_pose_msg.poses[2].position.x = rd_.link_[Right_Hand].xpos(0);
-        robot_pose_msg.poses[2].position.y = rd_.link_[Right_Hand].xpos(1);
-        robot_pose_msg.poses[2].position.z = rd_.link_[Right_Hand].xpos(2);
+        robot_pose_msg.poses[3].position.x = rd_.link_[Right_Hand].xpos(0);
+        robot_pose_msg.poses[3].position.y = rd_.link_[Right_Hand].xpos(1);
+        robot_pose_msg.poses[3].position.z = rd_.link_[Right_Hand].xpos(2);
         Eigen::Quaterniond quat_rhand(rd_.link_[Right_Hand].rotm);
-        robot_pose_msg.poses[2].orientation.x = quat_rhand.x();
-        robot_pose_msg.poses[2].orientation.y = quat_rhand.y();
-        robot_pose_msg.poses[2].orientation.z = quat_rhand.z();
-        robot_pose_msg.poses[2].orientation.w = quat_rhand.w();
+        robot_pose_msg.poses[3].orientation.x = quat_rhand.x();
+        robot_pose_msg.poses[3].orientation.y = quat_rhand.y();
+        robot_pose_msg.poses[3].orientation.z = quat_rhand.z();
+        robot_pose_msg.poses[3].orientation.w = quat_rhand.w();
 
         robot_pose_pub.publish(robot_pose_msg);
         pub_cnt = 0;
