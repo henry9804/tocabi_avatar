@@ -29,6 +29,8 @@
 
 #include <eigen_conversions/eigen_msg.h>
 
+#include "QP/QP_cartesian_velocity_wb.h"
+
 const int FILE_CNT = 2;
 
 // mob lstm
@@ -81,6 +83,10 @@ public:
     void computePlanner();
     void copyRobotData(RobotData &rd_l);
 
+    void TargetPosesCallback(const geometry_msgs::PoseArrayPtr &msg);
+    void TargetLHandPoseCallback(const geometry_msgs::PoseStampedPtr &msg);
+    void TargetHeadPoseCallback(const geometry_msgs::PoseStampedPtr &msg);
+    void TargetRHandPoseCallback(const geometry_msgs::PoseStampedPtr &msg);
 
     RobotData &rd_;
     RobotData rd_cc_;
@@ -142,6 +148,14 @@ public:
     //////////yh human demonstration collection////////
     ros::Publisher robot_pose_pub;
     geometry_msgs::PoseArray robot_pose_msg;
+
+    //////////jh QP////////
+    ros::Subscriber lhand_pose_target_sub_;
+    ros::Subscriber head_pose_target_sub_;
+    ros::Subscriber rhand_pose_target_sub_;
+
+    std::vector<Eigen::Affine3d> target_robot_poses_world_; // left hand, upper body, head, right hand
+    std::unique_ptr<QP::CartesianVelocityWB> qp_cartesian_velocity_;
 
     //////////dg custom controller functions////////
     void setGains();

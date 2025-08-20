@@ -63,8 +63,17 @@ AvatarController::AvatarController(RobotData &rd) : rd_(rd)
 
     //opto_ftsensor_sub = nh_avatar_.subscribe("/atiforce/ftsensor", 100, &AvatarController::OptoforceFTCallback, this); // real robot experiment
 
+    // for policy target
+    lhand_pose_target_sub_ = nh_avatar_.subscribe("/tocabi/act/lhand_pose_target", 1, &AvatarController::TargetLHandPoseCallback, this);
+    head_pose_target_sub_ = nh_avatar_.subscribe("/tocabi/act/head_pose_target", 1, &AvatarController::TargetHeadPoseCallback, this);
+    rhand_pose_target_sub_ = nh_avatar_.subscribe("/tocabi/act/rhand_pose_target", 1, &AvatarController::TargetRHandPoseCallback, this);
+
     robot_pose_pub = nh_avatar_.advertise<geometry_msgs::PoseArray>("/tocabi/robot_poses", 1);
     robot_pose_msg.poses.resize(4);
+
+    qp_cartesian_velocity_ = std::make_unique<QP::CartesianVelocityWB>();
+    target_robot_poses_world_.resize(4); // left hand, upper body, head, right hand
+    for (auto &pose : target_robot_poses_world_) pose.setIdentity();
 
     bool urdfmode = false;
     std::string urdf_path, desc_package_path;
@@ -919,6 +928,35 @@ void AvatarController::computeSlow()
     }
     else if (rd_.tc_.mode == 13) //2KHZ STRICT
     {
+        if (rd_.tc_init) //한번만 실행됩니다(gui)
+        {
+            rd_.link_[Left_Hand].x_desired = rd_.link_[Left_Hand].x_init;
+            rd_.link_[Right_Hand].x_desired = rd_.link_[Right_Hand].x_init;
+            rd_.link_[Upper_Body].x_desired = rd_.link_[Upper_Body].x_init;
+            rd_.link_[Head].x_desired = rd_.link_[Head].x_init;
+
+            rd_.link_[Left_Hand].rot_desired = rd_.link_[Left_Hand].rot_init;
+            rd_.link_[Right_Hand].rot_desired = rd_.link_[Right_Hand].rot_init;
+            rd_.link_[Head].rot_desired = rd_.link_[Head].rot_init;
+
+            // ====================== Initialize target_robot_poses_world_ ======================
+            // left hand
+            target_robot_poses_world_[0].translation() = rd_.link_[Left_Hand].xpos;
+            target_robot_poses_world_[0].linear() = rd_.link_[Left_Hand].rotm;
+
+            // upperbody
+            target_robot_poses_world_[1].translation() = rd_.link_[Upper_Body].xpos;
+            target_robot_poses_world_[1].linear() = rd_.link_[Upper_Body].rotm;
+
+            // head
+            target_robot_poses_world_[2].translation() = rd_.link_[Head].xpos;
+            target_robot_poses_world_[2].linear() = rd_.link_[Head].rotm;
+
+            // right hand
+            target_robot_poses_world_[3].translation() = rd_.link_[Right_Hand].xpos;
+            target_robot_poses_world_[3].linear() = rd_.link_[Right_Hand].rotm;
+            // ==================================================================================
+        }
         if (walking_enable_ == true)
         {   
             //cout << " test 1 " << endl;
@@ -1509,42 +1547,57 @@ void AvatarController::computeFast()
         calculateScaMlpOutput(larm_upperbody_sca_mlp_);
         calculateScaMlpOutput(rarm_upperbody_sca_mlp_);
         // calculateScaMlpOutput(btw_arms_sca_mlp_);
-        // avatar mode pedal
-        avatarModeStateMachine();
 
-        //motion planing and control//
-        motionGenerator(); // 140~240us(HQPIK)
-        //STEP3: Compute q_dot for CAM control
-        //computeCAMcontrol_HQP();
+        // ==================== Desired EE pose ==================== 
+        // Left Hand
+        rd_.link_[Left_Hand].x_desired = target_robot_poses_world_[0].translation();
+        rd_.link_[Left_Hand].rot_desired = target_robot_poses_world_[0].rotation();
+        
+        // Upper body
+        rd_.link_[Upper_Body].x_desired = target_robot_poses_world_[1].translation();
+        rd_.link_[Upper_Body].rot_desired = target_robot_poses_world_[1].rotation();
+        
+        // Head
+        rd_.link_[Head].x_desired = target_robot_poses_world_[2].translation();
+        rd_.link_[Head].rot_desired = target_robot_poses_world_[2].rotation();
+        
+        // Right Hand
+        rd_.link_[Right_Hand].x_desired = target_robot_poses_world_[3].translation();
+        rd_.link_[Right_Hand].rot_desired = target_robot_poses_world_[3].rotation();
 
-        // calculateLstmOutput(left_leg_mob_lstm_);  //20~25us
-        // calculateLstmOutput(right_leg_mob_lstm_); //20~25us
-        // // std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
-        // // cout<<"LSTM output calc time: "<< std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count() <<endl;
-        // estimated_model_unct_torque_fast_.setZero();
-        // estimated_model_unct_torque_fast_.segment(0, 6) = left_leg_mob_lstm_.real_output.segment(0, 6);
-        // estimated_model_unct_torque_fast_.segment(6, 6) = right_leg_mob_lstm_.real_output.segment(0, 6);
+        // ==================== QP ====================
+        Eigen::VectorXd gain_diag = Eigen::VectorXd::Zero(6);
+        gain_diag << 5, 5, 5, 5, 5, 5;
+        // set QP problem
+        Eigen::VectorXd lhand_error = Eigen::VectorXd::Zero(6);
+        lhand_error.head(3) = rd_.link_[Left_Hand].x_desired - rd_.link_[Left_Hand].xpos;
+        lhand_error.tail(3) = DyrosMath::getPhi(rd_.link_[Left_Hand].rot_desired, rd_.link_[Left_Hand].rotm);
+        Eigen::VectorXd head_error = Eigen::VectorXd::Zero(6);
+        head_error.head(3) = rd_.link_[Head].x_desired - rd_.link_[Head].xpos;
+        head_error.tail(3) = DyrosMath::getPhi(rd_.link_[Head].rot_desired, rd_.link_[Head].rotm);
+        Eigen::VectorXd rhand_error = Eigen::VectorXd::Zero(6);
+        rhand_error.head(3) = rd_.link_[Right_Hand].x_desired - rd_.link_[Right_Hand].xpos;
+        rhand_error.tail(3) = DyrosMath::getPhi(rd_.link_[Right_Hand].rot_desired, rd_.link_[Right_Hand].rotm);
 
-        // if (gaussian_mode_ == true)
-        // {
-        //     // gaussian model
-        //     estimated_model_unct_torque_variance_fast_.setZero();
-        //     estimated_model_unct_torque_variance_fast_.segment(0, 6) = left_leg_mob_lstm_.real_output.segment(6, 6);
-        //     estimated_model_unct_torque_variance_fast_.segment(6, 6) = right_leg_mob_lstm_.real_output.segment(6, 6);
-        // }
+        Eigen::Matrix<double, 18, 21> Jacobian;
+        Jacobian.setZero();
+        Jacobian.block(0, 0, 6, 21) = rd_.link_[Left_Hand].Jac().block(0, 18, 6, 21);
+        Jacobian.block(6, 0, 6, 21) = rd_.link_[Head].Jac().block(0, 18, 6, 21);
+        Jacobian.block(12, 0, 6, 21) = rd_.link_[Right_Hand].Jac().block(0, 18, 6, 21);
+        qp_cartesian_velocity_->setCurrentState(rd_.q_.tail(21), rd_.q_dot_desired.tail(21), Jacobian);
+        qp_cartesian_velocity_->setDesiredEEVel(gain_diag.asDiagonal()*lhand_error, gain_diag.asDiagonal()*head_error, gain_diag.asDiagonal()*rhand_error);
 
-        // if (left_leg_mob_lstm_.atb_lstm_output_update_ == false)
-        // {
-        //     left_leg_mob_lstm_.atb_lstm_output_update_ = true;
-        //     estimated_model_unct_torque_thread_ = estimated_model_unct_torque_fast_;
-        //     estimated_model_unct_torque_variance_thread_ = estimated_model_unct_torque_variance_fast_;
-        //     left_leg_mob_lstm_.atb_lstm_output_update_ = false;
-        // }
+        // solve QP
+        Eigen::Matrix<double, 21, 1> opt_qdot;
+        if(!qp_cartesian_velocity_->getOptJointVel(opt_qdot))
+        {
+            ROS_INFO("QP did not solved!!!");
+        }
 
         for (int i = 12; i < MODEL_DOF; i++)
         {
-            desired_q_(i) = motion_q_(i);
-            desired_q_dot_(i) = motion_q_dot_(i); 
+            desired_q_dot_(i) = opt_qdot(i-12);
+            desired_q_(i) += opt_qdot(i-12) / hz_;
         }
 
         //STEP4: send desired q to the fast thread
@@ -1555,9 +1608,6 @@ void AvatarController::computeFast()
             desired_q_dot_slow_ = desired_q_dot_;
             atb_desired_q_update_ = false;
         }
-        savePreData();
-
-        // printOutTextFile();
     }
     else if (rd_.tc_.mode == 14)
     {
@@ -1573,6 +1623,55 @@ void AvatarController::computeThread3()
     // cout<<"thread3 test 3" <<endl;
     // comGenerator_MPC_joe(50.0, 1.0/50.0, 1.5, 2000/50.0); // Hz, T, Preview window  
 }
+
+void AvatarController::TargetLHandPoseCallback(const geometry_msgs::PoseStampedPtr &msg)
+{
+    // left hand
+    Eigen::Affine3d temp_target_lhand_pose;
+    temp_target_lhand_pose.translation() << msg->pose.position.x,
+                                            msg->pose.position.y,
+                                            msg->pose.position.z;
+    Eigen::Quaterniond target_quat_lhand(msg->pose.orientation.w,
+                                         msg->pose.orientation.x,
+                                         msg->pose.orientation.y,
+                                         msg->pose.orientation.z);
+    temp_target_lhand_pose.linear() = target_quat_lhand.toRotationMatrix();
+
+    target_robot_poses_world_[0] = temp_target_lhand_pose;
+}
+
+void AvatarController::TargetHeadPoseCallback(const geometry_msgs::PoseStampedPtr &msg)
+{
+    // head
+    Eigen::Affine3d temp_target_head_pose;
+    temp_target_head_pose.translation() << msg->pose.position.x,
+                                            msg->pose.position.y,
+                                            msg->pose.position.z;
+    Eigen::Quaterniond target_quat_head(msg->pose.orientation.w,
+                                         msg->pose.orientation.x,
+                                         msg->pose.orientation.y,
+                                         msg->pose.orientation.z);
+    temp_target_head_pose.linear() = target_quat_head.toRotationMatrix();
+
+    target_robot_poses_world_[2] = temp_target_head_pose;
+}
+
+void AvatarController::TargetRHandPoseCallback(const geometry_msgs::PoseStampedPtr &msg)
+{
+    // right hand
+    Eigen::Affine3d temp_target_rhand_pose;
+    temp_target_rhand_pose.translation() << msg->pose.position.x,
+                                            msg->pose.position.y,
+                                            msg->pose.position.z;
+    Eigen::Quaterniond target_quat_rhand(msg->pose.orientation.w,
+                                         msg->pose.orientation.x,
+                                         msg->pose.orientation.y,
+                                         msg->pose.orientation.z);
+    temp_target_rhand_pose.linear() = target_quat_rhand.toRotationMatrix();
+
+    target_robot_poses_world_[3] = temp_target_rhand_pose;
+}
+
 void AvatarController::comGenerator_MPC_wieber(double MPC_freq, double T, double preview_window, int MPC_synchro_hz_)
 {   //https://doi.org/10.1163/016918610X493552
     
